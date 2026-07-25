@@ -12,7 +12,7 @@ use super::{
 use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use flate2::read::GzDecoder;
@@ -48,7 +48,6 @@ where
         .build()
         .context("create HTTP client")?;
 
-    // Use the clean_url here
     let mut response = client.get(clean_url).send().context("download request")?;
     
     if !response.status().is_success() {
@@ -112,7 +111,6 @@ where
 // ---------------------------------------------------------------------------
 
 fn validate_rootfs_structure(rootfs_path: &Path) -> Result<()> {
-    // 1. Check for a usable shell (standard paths)
     let shell_candidates = [
         "bin/sh", "usr/bin/sh",
         "bin/bash", "usr/bin/bash",
@@ -122,7 +120,6 @@ fn validate_rootfs_structure(rootfs_path: &Path) -> Result<()> {
     ];
     let has_shell = shell_candidates.iter().any(|p| rootfs_path.join(p).exists());
 
-    // 2. If no shell, check for at least one executable in /bin or /usr/bin
     let has_exec = if !has_shell {
         let check_dir = |dir: &str| -> bool {
             let d = rootfs_path.join(dir);
@@ -136,7 +133,6 @@ fn validate_rootfs_structure(rootfs_path: &Path) -> Result<()> {
         check_dir("bin") || check_dir("usr/bin")
     } else { true };
 
-    // 3. Fallback: if still no executable, accept the rootfs if it has the core directories /usr, /var, /etc
     let has_directory_structure = if !has_shell && !has_exec {
         let essential_dirs = ["usr", "var", "etc"];
         essential_dirs.iter().all(|d| rootfs_path.join(d).is_dir())
@@ -147,14 +143,73 @@ fn validate_rootfs_structure(rootfs_path: &Path) -> Result<()> {
         "no usable shell or executable found, and missing core directories (/usr, /var, /etc)"
     );
 
-    // Ensure /proc directory exists (already created by setup_fake_sysdata before validation)
     anyhow::ensure!(rootfs_path.join("proc").is_dir(), "missing proc/");
 
     Ok(())
 }
 
-/// Safely unpacks an archive while bypassing Android's strict hard-link restrictions
+/// Recursively ensures all extracted files are readable/writable by the app
+/// so that deferred hard-link copies (and future cleanup) don't fail due to 0000 permissions.
+fn fix_permissions_recursive(path: &Path) {
+    if let Ok(metadata) = std::fs::symlink_metadata(path) {
+        let file_type = metadata.file_type();
+        
+        // Only modify permissions for actual files and directories, ignore symlinks
+        if file_type.is_dir() || file_type.is_file() {
+            let mut perms = metadata.permissions();
+            let mode = perms.mode();
+            
+            // Add owner read/write
+            let mut new_mode = mode | 0o600; 
+            if file_type.is_dir() {
+                // Add owner execute (search) for directories
+                new_mode |= 0o100; 
+            }
+            
+            if mode != new_mode {
+                perms.set_mode(new_mode);
+                let _ = std::fs::set_permissions(path, perms);
+            }
+        }
+
+        // Recurse into directories
+        if file_type.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    fix_permissions_recursive(&entry.path());
+                }
+            }
+        }
+    }
+}
+
+/// Safely sanitizes an archive path to ensure it cannot escape the extraction directory.
+/// Strips absolute roots and prevents `../` path traversal attacks.
+fn sanitize_archive_path(path: &Path) -> Option<PathBuf> {
+    let mut safe_path = PathBuf::new();
+    
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(c) => safe_path.push(c),
+            // Reject any path trying to traverse upwards via `../`
+            std::path::Component::ParentDir => return None,
+            // Ignore RootDir (`/`), CurDir (`./`), and prefixes
+            _ => continue, 
+        }
+    }
+    
+    if safe_path.as_os_str().is_empty() {
+        None
+    } else {
+        Some(safe_path)
+    }
+}
+
+/// Safely unpacks an archive, defers hard links, fixes permissions, and resolves links via copies.
 fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Path) -> Result<()> {
+    let mut deferred_links = Vec::new();
+
+    // Pass 1: Extract everything EXCEPT hard links
     for entry_result in archive.entries().context("failed to read archive entries")? {
         let mut entry = match entry_result {
             Ok(e) => e,
@@ -164,42 +219,65 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
             }
         };
 
-        let path = entry.path()?.to_path_buf();
-        let dest_path = temp_extract.join(&path);
+        let raw_path = match entry.path() {
+            Ok(p) => p.into_owned(),
+            Err(_) => continue,
+        };
+        
+        let safe_entry_path = match sanitize_archive_path(&raw_path) {
+            Some(p) => p,
+            None => {
+                log::warn!("Skipping unsafe entry path: {:?}", raw_path);
+                continue;
+            }
+        };
+        
+        let dest_path = temp_extract.join(&safe_entry_path);
 
-        // Check if the entry type is a hard link
         if entry.header().entry_type().is_hard_link() {
-            // Use unpack_in() so tar-rs resolves the link relative to temp_extract
-            if let Err(err) = entry.unpack_in(temp_extract) {
-                log::warn!("Hard link creation blocked ({:?}). Falling back to copy.", err);
-                
-                // Ensure parent directory exists for the fallback
-                if let Some(parent) = dest_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                
-                // Attempt to resolve the link target and copy it
-                if let Ok(Some(link_name)) = entry.link_name() {
-                    // Strip absolute prefix so it safely stays inside temp_extract
-                    let safe_link_name = link_name.strip_prefix("/").unwrap_or(&link_name);
-                    let link_target = temp_extract.join(safe_link_name);
-                    
-                    if let Err(copy_err) = std::fs::copy(&link_target, &dest_path) {
-                        log::warn!("Copy fallback failed: {:?}, using dummy.", copy_err);
-                        let _ = std::fs::write(&dest_path, b"");
-                    }
+            // Defer processing to prevent out-of-order sequence issues and sanitize the target
+            if let Ok(Some(link_name)) = entry.link_name() {
+                if let Some(safe_link_path) = sanitize_archive_path(&link_name) {
+                    let link_target = temp_extract.join(safe_link_path);
+                    deferred_links.push((dest_path, link_target));
                 } else {
-                    let _ = std::fs::write(&dest_path, b"");
+                    log::warn!("Skipping unsafe hard-link target: {:?}", link_name);
                 }
             }
         } else {
-            // Normal files, directories, and symlinks go here. 
-            // We use unpack_in instead of unpack to ensure safe path traversal limits.
+            // Normal files, directories, and symlinks
             if let Err(err) = entry.unpack_in(temp_extract) {
                 log::warn!("Skipping entry due to unpack error on {:?}: {:?}", dest_path, err);
             }
         }
     }
+
+    // Pass 2: Recursively fix permissions so Android can read everything we just dumped
+    fix_permissions_recursive(temp_extract);
+
+    // Pass 3: Resolve deferred hard links via copy fallbacks
+    for (dest_path, link_target) in deferred_links {
+        if let Some(parent) = dest_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        
+        match std::fs::copy(&link_target, &dest_path) {
+            Ok(_) => {
+                // Explicitly copy permissions to ensure execution bits (0o755) aren't lost to umask
+                if let Ok(meta) = std::fs::metadata(&link_target) {
+                    let _ = std::fs::set_permissions(&dest_path, meta.permissions());
+                }
+            }
+            Err(copy_err) => {
+                log::warn!(
+                    "Copy fallback failed for {:?} -> {:?}: {:?}, using dummy.",
+                    link_target, dest_path, copy_err
+                );
+                let _ = std::fs::write(&dest_path, b"");
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -208,7 +286,6 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
     
     std::fs::create_dir_all(temp_extract).context("create temp extract dir")?;
 
-    // Detect the file extension to choose the right decompressor
     let file_name = tarball_path
         .file_name()
         .unwrap_or_default()
@@ -220,13 +297,11 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
         let archive = tar::Archive::new(gz_decoder);
         unpack_archive_safe(archive, temp_extract).context("extract tar.gz tarball")?;
     } else {
-        // Default to XZ
         let xz_decoder = xz2::read::XzDecoder::new(BufReader::new(file));
         let archive = tar::Archive::new(xz_decoder);
         unpack_archive_safe(archive, temp_extract).context("extract tar.xz tarball")?;
     }
 
-    // List all entries in temp_extract
     let entries: Vec<_> = std::fs::read_dir(temp_extract)
         .context("list temp dir")?
         .filter_map(|e| e.ok())
@@ -236,7 +311,6 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
         anyhow::bail!("tarball extracted no files");
     }
 
-    // Helper to check if a directory looks like a rootfs
     let is_rootfs_dir = |dir: &Path| -> bool {
         dir.is_dir()
             && (dir.join("bin").is_dir()
@@ -246,13 +320,11 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
                 || dir.join("etc").is_dir())
     };
 
-    // Find the best candidate: first, look for a directory that looks like a rootfs
-    let top: std::path::PathBuf = entries
+    let top: PathBuf = entries
         .iter()
         .find(|e| is_rootfs_dir(&e.path()))
         .map(|e| e.path())
         .or_else(|| {
-            // If none match, fallback to the first directory
             entries
                 .iter()
                 .find(|e| e.path().is_dir())
@@ -267,7 +339,6 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
     let _ = std::fs::remove_dir_all(dest);
     std::fs::rename(&top, dest).context("rename rootfs to dest")?;
 
-    // Clean up any remaining files/dirs in temp_extract (metadata, headers, etc.)
     let _ = std::fs::remove_dir_all(temp_extract);
 
     setup_fake_sysdata(dest)?;
@@ -280,11 +351,9 @@ fn setup_fake_sysdata(rootfs: &Path) -> Result<()> {
     let proc_dir = rootfs.join("proc");
     let sys_empty = rootfs.join("sys/.empty");
 
-    // Create directories (if they don't already exist)
     std::fs::create_dir_all(&proc_dir).context("create proc dir")?;
     std::fs::create_dir_all(&sys_empty).context("create sys/.empty")?;
 
-    // Ensure they are writable – some tarballs ship them as read‑only
     let _ = std::fs::set_permissions(&proc_dir, std::fs::Permissions::from_mode(0o755));
     let _ = std::fs::set_permissions(&sys_empty.parent().unwrap_or_else(|| Path::new("/")), std::fs::Permissions::from_mode(0o755));
     let _ = std::fs::set_permissions(&sys_empty, std::fs::Permissions::from_mode(0o755));
@@ -324,11 +393,6 @@ fn setup_fake_sysdata(rootfs: &Path) -> Result<()> {
 // public entry points
 // ---------------------------------------------------------------------------
 
-/// Generic rootfs installation. Parameters should be passed in via Kotlin/JNI.
-/// 
-/// `url`: The full HTTP/HTTPS URL of the tar.xz archive.
-/// `tarball_name`: The filename to save inside the app's cache directory (e.g. "my_distro.tar.xz").
-/// `rootfs_path`: The full path where the rootfs should be extracted (e.g. "/data/data/com.app/files/rootfs/my_distro").
 pub fn ensure_rootfs_with_progress(
     url: &str,
     tarball_name: &str,
@@ -375,7 +439,6 @@ pub fn ensure_rootfs_with_progress(
     // 1. Download Phase
     loop {
         if tarball_path.exists() {
-            // Because checksums are disabled, we assume an existing file is complete.
             log::info!("Found existing tarball in cache: {:?}", tarball_path);
             break;
         }
@@ -414,15 +477,11 @@ pub fn ensure_rootfs_with_progress(
 
     match extract_tarball(&tarball_path, &staging_rootfs_path, &temp_extract) {
         Ok(()) => {
-                // Wait for the file system to settle – important for very small rootfs archives
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        
+            std::thread::sleep(std::time::Duration::from_millis(500));
             validate_rootfs_structure(&staging_rootfs_path)
                 .context("validate extracted rootfs structure")?;
         }
         Err(e) => {
-            // Because checksums are disabled, an extraction failure often means the cache is corrupt.
-            // We purge the bad cache and abort, prompting the user/system to retry and fetch a fresh copy.
             log::warn!("{} extract failed: {:?}", rootfs_name, e);
             let _ = std::fs::remove_dir_all(&temp_extract);
             let _ = std::fs::remove_dir_all(&staging_rootfs_path);
@@ -439,7 +498,7 @@ pub fn ensure_rootfs_with_progress(
     }
 
     let had_old = rootfs_path.exists();
-    let mut backup_rootfs_path: Option<std::path::PathBuf> = None;
+    let mut backup_rootfs_path: Option<PathBuf> = None;
     if had_old {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -469,7 +528,6 @@ pub fn ensure_rootfs_with_progress(
         }
     }
 
-    // Cleanup local cache tarball to save space, since we don't have checksums to verify it later anyway
     let _ = std::fs::remove_file(&tarball_path);
 
     report(100, "Done");
@@ -478,7 +536,6 @@ pub fn ensure_rootfs_with_progress(
 
 
 fn patch_user_group_files(rootfs: &Path) {
-    // Get current Android username (e.g. "u0_a123")
     let username = match std::process::Command::new("id")
         .arg("-un")
         .output()
@@ -489,7 +546,6 @@ fn patch_user_group_files(rootfs: &Path) {
     let uid = unsafe { libc::getuid() };
     let gid = unsafe { libc::getgid() };
 
-    // Get group names and IDs from the host
     let group_names = match std::process::Command::new("id").arg("-Gn").output() {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         Err(_) => return,
@@ -510,7 +566,6 @@ fn patch_user_group_files(rootfs: &Path) {
         return;
     }
 
-    // Helper to append a line to a file that exists inside the rootfs
     let append = |rel: &str, content: &str| {
         let path = rootfs.join(rel);
         if path.exists() {
@@ -521,7 +576,6 @@ fn patch_user_group_files(rootfs: &Path) {
         }
     };
 
-    // 1. /etc/passwd and /etc/shadow – add the current Android user
     append(
         "etc/passwd",
         &format!(
@@ -534,7 +588,6 @@ fn patch_user_group_files(rootfs: &Path) {
         &format!("aid_{}:*:18446:0:99999:7:::", username),
     );
 
-    // 2. /etc/group and /etc/gshadow – add every supplementary group
     for (name, grp_id) in names.iter().zip(ids.iter()) {
         append(
             "etc/group",
