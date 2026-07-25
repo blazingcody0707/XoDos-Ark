@@ -191,6 +191,10 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
                             "Hard link failed, copying instead: {:?} -> {:?}: {}",
                             link_name, dest, e
                         );
+                        // Before copying, make sure the source is readable
+                        if let Err(perm_err) = make_file_readable(&source) {
+                            log::warn!("Could not adjust source permissions for copy: {:?}", perm_err);
+                        }
                         if let Err(copy_err) = std::fs::copy(&source, &dest) {
                             log::error!(
                                 "Copy also failed for hard link {:?} -> {:?}: {}",
@@ -210,9 +214,14 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
                 deferred_links.push((link_name, dest));
             }
         } else {
-            // Normal files, directories, symlinks – unpack immediately
+            // Normal file, directory, symlink – unpack immediately
             if let Err(err) = entry.unpack(&dest) {
                 log::warn!("Unpack error on {:?}: {:?}", dest, err);
+            } else if entry.header().entry_type().is_file() {
+                // After a regular file is created, ensure it is readable & writable by owner
+                if let Err(e) = make_file_readable(&dest) {
+                    log::warn!("Could not adjust permissions on {:?}: {:?}", dest, e);
+                }
             }
         }
     }
@@ -221,13 +230,13 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
     for (link_name, dest) in deferred_links {
         let source = temp_extract.join(&link_name);
         if source.exists() {
-            // Use copy; a real hard link might still fail on some filesystems
+            // Make sure the source is readable before copying
+            let _ = make_file_readable(&source);
             if let Err(e) = std::fs::copy(&source, &dest) {
                 log::error!(
                     "Deferred copy failed: {:?} -> {:?}: {}",
                     source, dest, e
                 );
-                // Placeholder to prevent missing‑file errors later
                 let _ = std::fs::write(&dest, b"");
             }
         } else {
@@ -239,6 +248,20 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
         }
     }
 
+    Ok(())
+}
+
+/// Add owner read+write permission to a file, ignoring errors.
+fn make_file_readable(path: &std::path::Path) -> Result<(), std::io::Error> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::metadata(path)?;
+    let mut perms = metadata.permissions();
+    let current = perms.mode();
+    // Only change if owner lacks read or write bits
+    if current & 0o600 != 0o600 {
+        perms.set_mode(current | 0o600); // add rw for owner
+        std::fs::set_permissions(path, perms)?;
+    }
     Ok(())
 }
 
@@ -628,3 +651,5 @@ fi
         let _ = std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755));
     }
 }
+
+
