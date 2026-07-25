@@ -49,7 +49,7 @@ where
         .context("create HTTP client")?;
 
     let mut response = client.get(clean_url).send().context("download request")?;
-    
+
     if !response.status().is_success() {
         anyhow::bail!(
             "download failed: {} {} (URL: {})",
@@ -73,7 +73,7 @@ where
         }
         file.write_all(&buf[..n]).context("write file")?;
         downloaded += n as u64;
-        
+
         if total > 0 {
             let percent = (downloaded * 100 / total).min(100) as u8;
             if percent != last_reported_pct {
@@ -153,19 +153,19 @@ fn validate_rootfs_structure(rootfs_path: &Path) -> Result<()> {
 fn fix_permissions_recursive(path: &Path) {
     if let Ok(metadata) = std::fs::symlink_metadata(path) {
         let file_type = metadata.file_type();
-        
+
         // Only modify permissions for actual files and directories, ignore symlinks
         if file_type.is_dir() || file_type.is_file() {
             let mut perms = metadata.permissions();
             let mode = perms.mode();
-            
+
             // Add owner read/write
-            let mut new_mode = mode | 0o600; 
+            let mut new_mode = mode | 0o600;
             if file_type.is_dir() {
                 // Add owner execute (search) for directories
-                new_mode |= 0o100; 
+                new_mode |= 0o100;
             }
-            
+
             if mode != new_mode {
                 perms.set_mode(new_mode);
                 let _ = std::fs::set_permissions(path, perms);
@@ -187,17 +187,17 @@ fn fix_permissions_recursive(path: &Path) {
 /// Strips absolute roots and prevents `../` path traversal attacks.
 fn sanitize_archive_path(path: &Path) -> Option<PathBuf> {
     let mut safe_path = PathBuf::new();
-    
+
     for component in path.components() {
         match component {
             std::path::Component::Normal(c) => safe_path.push(c),
             // Reject any path trying to traverse upwards via `../`
             std::path::Component::ParentDir => return None,
             // Ignore RootDir (`/`), CurDir (`./`), and prefixes
-            _ => continue, 
+            _ => continue,
         }
     }
-    
+
     if safe_path.as_os_str().is_empty() {
         None
     } else {
@@ -223,7 +223,7 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
             Ok(p) => p.into_owned(),
             Err(_) => continue,
         };
-        
+
         let safe_entry_path = match sanitize_archive_path(&raw_path) {
             Some(p) => p,
             None => {
@@ -231,7 +231,7 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
                 continue;
             }
         };
-        
+
         let dest_path = temp_extract.join(&safe_entry_path);
 
         if entry.header().entry_type().is_hard_link() {
@@ -260,7 +260,7 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
         if let Some(parent) = dest_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        
+
         match std::fs::copy(&link_target, &dest_path) {
             Ok(_) => {
                 // Explicitly copy permissions to ensure execution bits (0o755) aren't lost to umask
@@ -283,7 +283,7 @@ fn unpack_archive_safe<R: Read>(mut archive: tar::Archive<R>, temp_extract: &Pat
 
 fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Result<()> {
     let file = File::open(tarball_path).context("open tarball")?;
-    
+
     std::fs::create_dir_all(temp_extract).context("create temp extract dir")?;
 
     let file_name = tarball_path
@@ -302,15 +302,7 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
         unpack_archive_safe(archive, temp_extract).context("extract tar.xz tarball")?;
     }
 
-    let entries: Vec<_> = std::fs::read_dir(temp_extract)
-        .context("list temp dir")?
-        .filter_map(|e| e.ok())
-        .collect();
-
-    if entries.is_empty() {
-        anyhow::bail!("tarball extracted no files");
-    }
-
+    // Helper to check if a directory looks like a rootfs
     let is_rootfs_dir = |dir: &Path| -> bool {
         dir.is_dir()
             && (dir.join("bin").is_dir()
@@ -320,30 +312,48 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
                 || dir.join("etc").is_dir())
     };
 
-    let top: PathBuf = entries
-        .iter()
-        .find(|e| is_rootfs_dir(&e.path()))
-        .map(|e| e.path())
-        .or_else(|| {
-            entries
-                .iter()
-                .find(|e| e.path().is_dir())
-                .map(|e| e.path())
-        })
-        .ok_or_else(|| anyhow::anyhow!("no rootfs directory found in tarball"))?;
+    // ---------------------------------------------------------------
+    // NEW: Accept both flat (./usr ./bin ./etc) and wrapped (subdir/) tarballs
+    // ---------------------------------------------------------------
+    if is_rootfs_dir(temp_extract) {
+        // Flat tarball – the temp_extract itself is the rootfs
+        let _ = std::fs::remove_dir_all(dest);
+        std::fs::rename(temp_extract, dest)
+            .context("rename temp_extract rootfs to dest")?;
+        // temp_extract no longer exists, no extra cleanup needed
+    } else {
+        // Wrapped tarball – find the single top-level directory
+        let entries: Vec<_> = std::fs::read_dir(temp_extract)
+            .context("list temp dir")?
+            .filter_map(|e| e.ok())
+            .collect();
 
-    if !top.is_dir() {
-        anyhow::bail!("selected top-level entry is not a directory");
+        if entries.is_empty() {
+            anyhow::bail!("tarball extracted no files");
+        }
+
+        let top: PathBuf = entries
+            .iter()
+            .find(|e| is_rootfs_dir(&e.path()))
+            .map(|e| e.path())
+            .or_else(|| {
+                entries.iter().find(|e| e.path().is_dir()).map(|e| e.path())
+            })
+            .ok_or_else(|| anyhow::anyhow!("no rootfs directory found in tarball"))?;
+
+        if !top.is_dir() {
+            anyhow::bail!("selected top-level entry is not a directory");
+        }
+
+        let _ = std::fs::remove_dir_all(dest);
+        std::fs::rename(&top, dest).context("rename rootfs to dest")?;
+        // Clean up the now-empty temp_extract
+        let _ = std::fs::remove_dir_all(temp_extract);
     }
-
-    let _ = std::fs::remove_dir_all(dest);
-    std::fs::rename(&top, dest).context("rename rootfs to dest")?;
-
-    let _ = std::fs::remove_dir_all(temp_extract);
 
     setup_fake_sysdata(dest)?;
     patch_user_group_files(dest);
-    write_fixdbus_script(dest); 
+    write_fixdbus_script(dest);
     Ok(())
 }
 
@@ -402,7 +412,7 @@ pub fn ensure_rootfs_with_progress(
     let _guard = DOWNLOAD_LOCK
         .lock()
         .map_err(|e| anyhow::anyhow!("download lock poisoned: {:?}", e))?;
-    
+
     let ctx = get_application_context()?;
     let cache_dir = &ctx.cache_dir;
 
@@ -425,12 +435,12 @@ pub fn ensure_rootfs_with_progress(
     std::fs::create_dir_all(cache_dir).context("create cache dir")?;
     let tarball_path = cache_dir.join(tarball_name);
     let tarball_tmp = cache_dir.join(format!("{}.tmp", tarball_name));
-    
+
     let temp_extract = rootfs_path
         .parent()
         .map(|p| p.join(format!("{}_extract_tmp", rootfs_name)))
         .unwrap_or_else(|| rootfs_path.with_extension("extract_tmp"));
-        
+
     let staging_rootfs_path = rootfs_path
         .parent()
         .map(|p| p.join(format!("{}.new", rootfs_name)))
@@ -446,7 +456,7 @@ pub fn ensure_rootfs_with_progress(
         let dl_label = format!("Downloading {}", rootfs_name);
         report(0, &dl_label);
         let _ = std::fs::remove_file(&tarball_tmp);
-        
+
         match download_tarball_with_progress(
             &tarball_tmp,
             &tarball_path,
@@ -468,7 +478,7 @@ pub fn ensure_rootfs_with_progress(
     // 2. Extraction Phase
     let ext_label = format!("Extracting {}", rootfs_name);
     report(70, &ext_label);
-    
+
     if let Some(parent) = rootfs_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -485,7 +495,7 @@ pub fn ensure_rootfs_with_progress(
             log::warn!("{} extract failed: {:?}", rootfs_name, e);
             let _ = std::fs::remove_dir_all(&temp_extract);
             let _ = std::fs::remove_dir_all(&staging_rootfs_path);
-            let _ = std::fs::remove_file(&tarball_path); 
+            let _ = std::fs::remove_file(&tarball_path);
             anyhow::bail!("Extraction failed (archive might be corrupt). Cache cleared. Please try again.");
         }
     }
