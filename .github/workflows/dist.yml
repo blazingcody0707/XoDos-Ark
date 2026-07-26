@@ -1,4 +1,4 @@
-name: Mirror upstream release
+name: Mirror Roofs arm64 release
 
 on:
   workflow_dispatch:
@@ -6,23 +6,23 @@ on:
       source_owner:
         description: 'Upstream owner'
         required: true
-        default: 'termux'
+        default: 'AryanVBW'
       source_repo:
         description: 'Upstream repo'
         required: true
-        default: 'proot-distro'
+        default: 'Roofs'
       source_tag:
         description: 'Upstream release tag'
         required: true
-        default: 'v4.17.3'
+        default: 'arm64'
       target_tag:
         description: 'Release tag in this repo'
         required: true
-        default: 'mirror-v4.17.3'
+        default: 'mirror-arm64'
       target_title:
         description: 'Release title in this repo'
         required: true
-        default: 'Mirrored proot-distro v4.17.3'
+        default: 'Mirrored Roofs arm64'
 
 permissions:
   contents: write
