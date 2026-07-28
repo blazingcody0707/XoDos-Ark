@@ -769,6 +769,22 @@ private fun rebuildExtraKeys(
             }
             fixedParent.addView(fixedRow)
         }
+        
+        // If the array was empty, still add a clickable gear button
+        if (fixedParent.childCount == 0) {
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,  // <-- FIXED: fully qualified
+                    rowHeight
+                )
+            }
+            val editBtn = makeButton("⚙️", isTransparent = false, isFixed = true)
+            editBtn.setOnClickListener { onEditClicked() }
+            row.addView(editBtn)
+            fixedParent.addView(row)
+        }
     } catch (e: Exception) {
         e.printStackTrace()
     }
