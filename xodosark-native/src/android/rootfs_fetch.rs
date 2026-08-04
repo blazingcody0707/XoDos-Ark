@@ -350,6 +350,7 @@ fn extract_tarball(tarball_path: &Path, dest: &Path, temp_extract: &Path) -> Res
         // Clean up the now-empty temp_extract
         let _ = std::fs::remove_dir_all(temp_extract);
     }
+std::fs::create_dir_all(dest.join("etc")).ok();
 
     setup_fake_sysdata(dest)?;
     patch_user_group_files(dest);

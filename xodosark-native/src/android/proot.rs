@@ -371,8 +371,9 @@ argv.push(CString::new(format!("--bind={}:/tmp/.vortek", host_vortek_dir.display
             CString::new("HOME=/root").unwrap(),
             CString::new("TERM=xterm-256color").unwrap(),
             CString::new("LANG=C.UTF-8").unwrap(),
-            CString::new("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin").unwrap(),
-            CString::new("TMPDIR=/tmp").unwrap(),
+           // CString::new("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin").unwrap(),
+           CString::new("PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/system/bin:/data/data/app.xodos2/files/usr/bin").unwrap()
+             CString::new("TMPDIR=/tmp").unwrap(),
             CString::new("XDG_RUNTIME_DIR=/run/user/0").unwrap(),
             CString::new("WAYLAND_DISPLAY=wayland-xodos2").unwrap(),
             CString::new("XDG_SESSION_TYPE=wayland").unwrap(),
@@ -436,7 +437,19 @@ argv.push(CString::new(format!("--bind={}:/tmp/.vortek", host_vortek_dir.display
             CString::new("PS1=[XoDos-Ark\\W]\\$ ").unwrap(),
         ]);
     }
+// Virgl / GPU acceleration socket for bionic fallback
+let virgl_dir = "/data/data/app.xodos2/files/virgl-run";
+let vtest_sock = format!("{}/vtest.sock", virgl_dir);
+let venus_sock = format!("{}/venus.sock", virgl_dir);
 
+let socket_name = if std::path::Path::new(&vtest_sock).exists() {
+    vtest_sock
+} else {
+    venus_sock
+};
+
+env.push(CString::new(format!("VTEST_SOCKET_NAME={}", socket_name)).unwrap());
+env.push(CString::new(format!("VTEST_RENDERER_SOCKET_NAME={}", socket_name)).unwrap());
     // ---------- Common Android System Context Forwarding ----------
     let android_vars = [
         "ANDROID_ART_ROOT",
