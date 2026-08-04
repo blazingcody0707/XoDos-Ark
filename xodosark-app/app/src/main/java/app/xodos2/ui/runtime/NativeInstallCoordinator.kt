@@ -294,8 +294,13 @@ object NativeInstallCoordinator {
     val envLines = """
 
         # XoDos-ark environment
+        unset GALLIUM_DRIVER MESA_DRIVER_PATH MESA_LOADER_DRIVER_OVERRIDE TU_DEBUG VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true
         export WAYLAND_DISPLAY=wayland-xodos2
-        export DISPLAY=:0
+        if [ -f /.x11 ]; then
+         export DISPLAY=:0
+         unset WAYLAND_DISPLAY
+        fi
+        export PULSE_SERVER=127.0.0.1        
         export MOZ_FAKE_NO_SANDBOX=1
         export DISTRO=$distroId
         source /etc/environment
