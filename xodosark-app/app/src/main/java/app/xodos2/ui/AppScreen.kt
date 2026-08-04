@@ -93,26 +93,7 @@ import java.io.InputStreamReader
 
 import android.view.WindowManager
 
-fun Modifier.glassDialogStyle(): Modifier = this
-    .background(
-        brush = Brush.verticalGradient(
-            colors = listOf(
-                Color(0xE6131124), // deep frosted glass background
-                Color(0xF20B0F19)
-            )
-        ),
-        shape = RoundedCornerShape(24.dp)
-    )
-    .border(
-        width = 1.dp,
-        brush = Brush.verticalGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.28f),
-                Color.White.copy(alpha = 0.05f)
-            )
-        ),
-        shape = RoundedCornerShape(24.dp)
-    )
+import app.xodos2.ui.glassDialogStyle
 
 private val VULKAN_MODES = listOf("LLVMPIPE", "VENUS", "TURNIP")
 private val OPENGL_MODES = listOf("LLVMPIPE", "VIRGL", "ZINK", "GL4ES")
@@ -130,38 +111,39 @@ private fun x11ResolutionModeLabelForInternal(mode: String): String = when (mode
     else -> X11_MODE_LABEL_NATIVE
 }
 
-    /**
+ /**
  * Writes /.x11 or /.wayland into every installed container's rootfs.
- * The unused marker is deleted so that only the active launcher marker exists.
+ * The opposite marker is removed *before* the new one is ensured,
+ * so the two markers can never exist simultaneously.
  */
 fun updateLauncherMarkers(context: Context, launcherDefault: String) {
     val filesDir = context.filesDir
-    val markerName = when {
-        launcherDefault.contains("X11", ignoreCase = true) -> ".x11"
-        launcherDefault.contains("Wayland", ignoreCase = true) -> ".wayland"
-        else -> return   // Terminal – remove all markers if you want
+
+    // Use the stable constants, not substring matching
+    val markerName = when (launcherDefault) {
+        AppPrefs.LAUNCHER_PREF_X11      -> ".x11"
+        AppPrefs.LAUNCHER_PREF_WAYLAND  -> ".wayland"
+        else -> return   // Terminal or anything else → remove both markers if you want
     }
 
     val otherMarker = if (markerName == ".x11") ".wayland" else ".x11"
 
     for (id in 1..3) {
-        val rootfs = File(filesDir, "containers/$id/")   
+        val rootfs = File(filesDir, "containers/$id")
         if (!rootfs.exists()) continue
 
-        // Create the marker for the chosen launcher
+        // Delete the opposite marker first
+        File(rootfs, otherMarker).delete()
+
+        // Ensure the chosen marker exists
         File(rootfs, markerName).apply {
             if (!exists()) {
                 createNewFile()
-                // Optionally write a timestamp for debugging
                 writeText(System.currentTimeMillis().toString())
             }
         }
-
-        // Remove the opposite marker
-        File(rootfs, otherMarker).delete()
     }
 }
-
 private fun x11ResolutionModeInternalForLabel(label: String): String = when (label) {
     X11_MODE_LABEL_NATIVE -> "native"
     X11_MODE_LABEL_SCALED -> "scaled"
@@ -881,7 +863,30 @@ fun openX11Settings() {
         }
     }
 
-    
+    LaunchedEffect(launcherDefault) {
+    if (!anyRootfsInstalled) return@LaunchedEffect   // only when containers exist
+    when (launcherDefault) {
+        AppPrefs.LAUNCHER_PREF_WAYLAND -> prepareWaylandBackend()
+        AppPrefs.LAUNCHER_PREF_X11     -> prepareX11Backend()
+        // Terminal – do nothing
+    }
+}
+
+LaunchedEffect(installDone) {
+    if (installDone) {
+        delay(500) // brief pause to let UI settle
+        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        if (intent != null) {
+            context.startActivity(intent)
+        }
+        // Force‑close the current process to avoid any lingering state
+        (context as? Activity)?.finish()
+        System.exit(0)
+    }
+}
+
 suspend fun downloadAndExtractTurnipDrivers(containerIds: List<Int>) = withContext(Dispatchers.IO) {
     val baseUrl = "https://github.com/xodiosx/mesa-for-android-container/releases/download/mirror-turnip-26.2.0-devel-20260511"
     val driversDir = File(context.filesDir, "drivers")
@@ -1585,27 +1590,8 @@ if (installDone) {
         color = Color(0xFF07040E)
     ) {
         // The dialog itself – no way to close it except the Restart button
-        AlertDialog(
-            onDismissRequest = { /* blocked – cannot be dismissed */ },
-            containerColor = Color.Transparent,
-            modifier = Modifier.glassDialogStyle(),
-            title = { Text("Setup complete", fontWeight = FontWeight.Bold, color = Color.White) },
-            text = { Text("Restart the app to apply the new container.\n\nPlease press Restart.", color = Color.White.copy(alpha = 0.85f)) },
-            confirmButton = {
-                GlassButton(onClick = {
-                    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                    }
-                    if (intent != null) {
-                        context.startActivity(intent)
-                        (context as? Activity)?.finish()
-                    }
-                }) {
-                    Text("Restart", color = Color(0xFFC3B6F9), fontWeight = FontWeight.Bold)
-                }
-            }
-            // No dismissButton → the dialog cannot be closed at all
-        )
+        
+        
     }
     return
 }

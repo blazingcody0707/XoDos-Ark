@@ -57,6 +57,7 @@ import app.xodos2.wayland.input.InputRouteState
 import com.termux.view.TerminalView
 import org.json.JSONArray
 import org.json.JSONObject
+import app.xodos2.ui.glassDialogStyle
 
 // ── Glass Dialog & Custom Imports ────────────────────────────────
 import app.xodos2.ui.glass.GlassButton

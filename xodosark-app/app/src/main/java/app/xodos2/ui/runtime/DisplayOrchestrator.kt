@@ -219,7 +219,7 @@ val payload = buildString {
         b.append("export WAYLAND_DISPLAY=").append(socketName).append("\n")
         when (openGLMode) {
             "VIRGL" -> {
-                b.append("unset VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")
+                b.append("unset GALLIUM_DRIVER MESA_DRIVER_PATH MESA_LOADER_DRIVER_OVERRIDE TU_DEBUG VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")
                 b.append("export GALLIUM_DRIVER=virpipe\n")
                 b.append("export MESA_LOADER_DRIVER_OVERRIDE=virpipe\n")
                 b.append("export LIBGL_ALWAYS_SOFTWARE=0\n")
@@ -243,7 +243,7 @@ val payload = buildString {
                 b.append("export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/gl4es:\$LD_LIBRARY_PATH\n")
             }
             else -> {
-                b.append("unset MESA_GL_VERSION_OVERRIDE LIBGL_FB VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")             
+                b.append("unset GALLIUM_DRIVER MESA_DRIVER_PATH MESA_LOADER_DRIVER_OVERRIDE TU_DEBUG MESA_GL_VERSION_OVERRIDE LIBGL_FB VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")             
                 b.append("export GALLIUM_DRIVER=llvmpipe\n")
                 b.append("export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe\n")
                 b.append("export LIBGL_ALWAYS_SOFTWARE=1\n")
@@ -268,10 +268,11 @@ val payload = buildString {
                 b.append("export TU_DEBUG=noconform\n")
             }
             else -> {
-                b.append("unset MESA_GL_VERSION_OVERRIDE LIBGL_FB VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")           
+                b.append("unset GALLIUM_DRIVER MESA_DRIVER_PATH MESA_LOADER_DRIVER_OVERRIDE TU_DEBUG MESA_GL_VERSION_OVERRIDE LIBGL_FB VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")           
+                
+                b.append("unset  VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")
                 b.append("export GALLIUM_DRIVER=llvmpipe\n")
-                b.append("unset VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")
-            }
+              }
         }
         return b.toString()
     }
@@ -283,7 +284,7 @@ val payload = buildString {
         sb.append("export DISPLAY=:0\n")
         when (openGL) {
             "VIRGL" -> {
-                sb.append("unset VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")
+                sb.append("unset GALLIUM_DRIVER MESA_DRIVER_PATH MESA_LOADER_DRIVER_OVERRIDE TU_DEBUG VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")
                 sb.append("export GALLIUM_DRIVER=virpipe\n")
                 sb.append("export MESA_LOADER_DRIVER_OVERRIDE=virpipe\n")
                 sb.append("export LIBGL_ALWAYS_SOFTWARE=0\n")
@@ -306,7 +307,7 @@ val payload = buildString {
                 sb.append("export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/gl4es:\$LD_LIBRARY_PATH\n")
             }
             else -> {
-                sb.append("unset MESA_GL_VERSION_OVERRIDE LIBGL_FB VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG || true\n")
+                sb.append("unset MESA_LOADER_DRIVER_OVERRIDE TU_DEBUG MESA_GL_VERSION_OVERRIDE LIBGL_FB VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE MESA_LOADER_DRIVER_OVERRIDE VKD3D_FEATURE_LEVEL VK_DRIVER_FILES VN_DEBUG GALLIUM_DRIVER || true\n")
                 sb.append("export GALLIUM_DRIVER=llvmpipe\n")
                 sb.append("export MESA_LOADER_DRIVER_OVERRIDE=llvmpipe\n")
                 sb.append("export LIBGL_ALWAYS_SOFTWARE=1\n")
@@ -334,7 +335,7 @@ val payload = buildString {
             }
             else -> {
                 sb.append("unset VK_ICD_FILENAMES MESA_VK_WSI_PRESENT_MODE VK_DRIVER_FILES VN_DEBUG || true\n")
-                sb.append("export VK_ICD_FILENAMES=/dev/null\n")
+                
             }
         }
         return sb.toString()

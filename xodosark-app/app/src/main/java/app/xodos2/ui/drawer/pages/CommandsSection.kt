@@ -21,6 +21,8 @@ import app.xodos2.ui.glassDialogStyle
 import app.xodos2.ui.prefs.AppPrefs
 import app.xodos2.ui.glass.GlassButton
 import org.json.JSONObject
+import app.xodos2.ui.glassDialogStyle
+
 
 //private data class SavedCommand(val title: String, val command: String)
 

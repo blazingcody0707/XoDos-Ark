@@ -28,6 +28,8 @@ import app.xodos2.ui.runtime.TerminalSessionController
 import app.xodos2.ui.runtime.NativeInstallCoordinator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import app.xodos2.ui.glassDialogStyle
+
 
 @Composable
 fun WineDrawerPage(
