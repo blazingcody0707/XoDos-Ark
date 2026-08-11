@@ -668,7 +668,9 @@ object NativeInstallCoordinator {
         val libFiles = mapOf(
             "libbusybox.so" to "libbusybox.so.1.37.0",
             "liblzma.so" to "liblzma.so.5",
-            "libproot_loader.so" to "libproot_loader.so"
+            "libproot_loader.so" to "libproot_loader.so",
+             "libtalloc.so" to "libtalloc.so.2",
+             "libandroid-shmem.so" to "libandroid-shmem.so"
         )
         for ((src, dst) in libFiles) {
             val srcFile = File(nativeLibDir, src)
