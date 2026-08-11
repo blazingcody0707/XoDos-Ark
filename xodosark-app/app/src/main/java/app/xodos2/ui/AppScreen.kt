@@ -1006,7 +1006,7 @@ fun downloadBootstrapArchive() {
 
         try {
             withContext(Dispatchers.IO) {
-                val url = URL("https://github.com/xodiosx/XoDos-Ark/releases/download/extra-0.1/extra.tar.xz")
+                val url = URL("https://github.com/xodiosx/XoDos-Ark/releases/download/extra-0.1/extra-2.tar.xz")
                 val connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 15_000
                 connection.readTimeout = 15_000
@@ -1019,7 +1019,7 @@ fun downloadBootstrapArchive() {
 
                 val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 if (!downloadsDir.exists()) downloadsDir.mkdirs()
-                val outputFile = File(downloadsDir, "extra.tar.xz")
+                val outputFile = File(downloadsDir, "extra-2.tar.xz")
 
                 inputStream.use { input ->
                     outputFile.outputStream().use { output ->
