@@ -116,6 +116,8 @@ export DISPLAY=:0
 dbus-launch --exit-with-session xfce4-session &
 ```
 
+how to use fex-emu you can use this wine https://github.com/GloriousEggroll/wine-ge-custom/releases/tag/GE-Proton8-26
+but i recomend that one
 ### 📦 Download (Pre‑built APK)
 
 Go to [Releases](https://github.com/xodiosx/XoDos-Ark/releases) and grab the latest stable APK.  
@@ -140,3 +142,5 @@ XoDos‑Ark stands on the shoulders of giants:
 - [Termux-X11](https://github.com/termux/termux-x11) – a Termux add-on that runs X11 applications natively  
 - [Wayland](https://wayland.freedesktop.org/) – the modern display protocol enabling seamless graphical integration  
 - [Trierarch](https://github.com/Beauty114514/trierarch/) – an inspiring open-source vessel
+  GloriousEggroll https://github.com/GloriousEggroll/wine-ge-custom
+  FEX-EMU  https://github.com/FEX-Emu/FEX
